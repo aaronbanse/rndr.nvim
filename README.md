@@ -29,6 +29,7 @@ Required:
 Optional:
 
 - `rsvg-convert`, `magick`, or `convert` for SVG rendering
+- `fidelitty` for higher-resolution rendering. Follow installation instructions at [](github.com/aaronbanse/fidelitty).
 
 
 ## Plugin Manager Setup

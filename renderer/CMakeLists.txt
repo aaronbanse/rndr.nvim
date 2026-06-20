@@ -69,6 +69,14 @@ target_include_directories(
 				${CMAKE_CURRENT_SOURCE_DIR}/vendor/stb
 )
 
+find_package(fidelitty QUIET)
+if(fidelitty_FOUND)
+	target_link_libraries(rndr PRIVATE fidelitty::fidelitty)
+	target_compile_definitions(rndr PRIVATE HAS_FIDELITTY)
+else()
+	message(STATUS "fidelitty not found; building without fidelitty support")
+endif()
+
 target_link_libraries(
 				rndr
 				PRIVATE

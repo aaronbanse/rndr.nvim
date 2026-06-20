@@ -3,6 +3,10 @@
 #include <iostream>
 #include <limits>
 
+#ifdef HAS_FIDELITTY
+#include "fidelitty.h"
+#endif
+
 #include "rndr.hpp"
 
 namespace {
@@ -20,6 +24,126 @@ float edge_function(Vec2 a, Vec2 b, Vec2 p) {
 }
 
 }
+
+#ifdef HAS_FIDELITTY
+
+std::vector<Rgb> bilinear_resample(const std::vector<Rgb>& source, int src_w, int src_h, int dst_w, int dst_h) {
+  std::vector<Rgb> output(static_cast<std::size_t>(dst_w) * dst_h);
+
+  const float sx = static_cast<float>(src_w) / static_cast<float>(dst_w);
+  const float sy = static_cast<float>(src_h) / static_cast<float>(dst_h);
+
+  for (int y = 0; y < dst_h; ++y) {
+    const float fy = (static_cast<float>(y) + 0.5f) * sy - 0.5f;
+    const int y0 = std::max(0, static_cast<int>(std::floor(fy)));
+    const int y1 = std::min(src_h - 1, y0 + 1);
+    const float yt = fy - static_cast<float>(y0);
+
+    for (int x = 0; x < dst_w; ++x) {
+      const float fx = (static_cast<float>(x) + 0.5f) * sx - 0.5f;
+      const int x0 = std::max(0, static_cast<int>(std::floor(fx)));
+      const int x1 = std::min(src_w - 1, x0 + 1);
+      const float xt = fx - static_cast<float>(x0);
+
+      const Rgb& p00 = source[static_cast<std::size_t>(y0 * src_w + x0)];
+      const Rgb& p10 = source[static_cast<std::size_t>(y0 * src_w + x1)];
+      const Rgb& p01 = source[static_cast<std::size_t>(y1 * src_w + x0)];
+      const Rgb& p11 = source[static_cast<std::size_t>(y1 * src_w + x1)];
+
+      const Rgb top = add(multiply(p00, 1.0f - xt), multiply(p10, xt));
+      const Rgb bot = add(multiply(p01, 1.0f - xt), multiply(p11, xt));
+      output[static_cast<std::size_t>(y * dst_w + x)] = add(multiply(top, 1.0f - yt), multiply(bot, yt));
+    }
+  }
+
+  return output;
+}
+
+void emit_terminal_frame(const std::vector<Rgb>& pixels,
+                         int img_w, int img_h,
+                         int term_w, int term_h,
+                         const ToneSettings& tone) {
+  const int cell_w = ftty_get_cell_width();
+  const int cell_h = ftty_get_cell_height();
+  const int pipeline_im_w = term_w * cell_w;
+  const int pipeline_im_h = term_h * cell_h;
+
+  const std::vector<Rgb> resampled = bilinear_resample(pixels, img_w, img_h, pipeline_im_w, pipeline_im_h);
+
+  ftty_context_t* ctx = ftty_context_create(1);
+  if (!ctx) {
+    std::cerr << "fidelitty error: context creation failed";
+    return;
+  }
+
+  ftty_pipeline_t* pipeline = ftty_context_create_render_pipeline(
+      ctx, term_w, term_h, pipeline_im_w, pipeline_im_h, FTTY_PIXEL_RGB);
+  if (!pipeline) {
+    std::cerr << "fidelitty error: pipeline creation failed";
+    return;
+  }
+
+  uint8_t* pipeline_input = ftty_pipeline_get_input_surface(pipeline);
+  const std::size_t pixel_count = static_cast<std::size_t>(pipeline_im_w) * pipeline_im_h;
+  for (std::size_t i = 0; i < pixel_count; ++i) {
+    const Rgb p_enhanced = enhance(resampled[i], tone);
+    pipeline_input[i * 3 + 0] = static_cast<uint8_t>(std::round(clamp01(p_enhanced.r) * 255.0f));
+    pipeline_input[i * 3 + 1] = static_cast<uint8_t>(std::round(clamp01(p_enhanced.g) * 255.0f));
+    pipeline_input[i * 3 + 2] = static_cast<uint8_t>(std::round(clamp01(p_enhanced.b) * 255.0f));
+  }
+
+  int exec_result = ftty_context_execute_render_pipeline(ctx, pipeline);
+  if (exec_result != 0) {
+    std::cerr << "fidelitty error: pipeline execution failed";
+    return;
+  }
+
+  int wait_result = ftty_context_wait_render_pipeline(ctx, pipeline);
+  if (wait_result != 0) {
+    std::cerr << "fidelitty error: pipeline execution timed out";
+    return;
+  }
+
+  const ftty_unicode_pixel_t* pipeline_output = ftty_pipeline_get_output_surface(pipeline);
+
+  std::string frame;
+  frame.reserve(static_cast<std::size_t>(term_h) * (static_cast<std::size_t>(term_w) * 16 + 32) + 32);
+  frame += "<FRAME>\n";
+  for (int y = 0; y < term_h; ++y) {
+    std::string glyphs;
+    std::string fg_colors;
+    std::string bg_colors;
+    glyphs.reserve(static_cast<std::size_t>(term_w) * 4);
+    fg_colors.reserve(static_cast<std::size_t>(term_w) * 6);
+    bg_colors.reserve(static_cast<std::size_t>(term_w) * 6);
+
+		for (int x = 0; x < term_w; ++x) {
+      const ftty_unicode_pixel_t& p = pipeline_output[term_w * y + x];
+      if (p.codepoint < 0x20 || p.codepoint == 0x7F) {
+        std::cerr << "fidelitty: control char U+" << std::hex << p.codepoint << std::dec
+                  << " at cell (" << x << "," << y << ")\n";
+      }
+      append_utf8(glyphs, p.codepoint);
+			append_hex(fg_colors, p.fr, p.fg, p.fb);
+			append_hex(bg_colors, p.br, p.bg, p.bb);
+		}
+
+		frame += "<TEXT>";
+		frame += glyphs;
+		frame += '\n';
+		frame += "<FG>";
+		frame += fg_colors;
+		frame += '\n';
+		frame += "<BG>";
+		frame += bg_colors;
+		frame += '\n';
+	}
+
+	frame += "<END>\n";
+	std::cout << frame;
+}
+
+#else // #ifdef HAS_FIDELITTY
 
 void emit_terminal_frame(const std::vector<Rgb>& pixels, int width, int height, const ToneSettings& tone) {
 	const int term_h = std::max(1, height / 2);
@@ -63,6 +187,8 @@ void emit_terminal_frame(const std::vector<Rgb>& pixels, int width, int height, 
 	frame += "<END>\n";
 	std::cout << frame;
 }
+
+#endif // #else // #ifdef HAS_FIDELITTY
 
 std::vector<Rgb> downsample_pixels(const std::vector<Rgb>& source, int src_w, int src_h, int dst_w, int dst_h) {
 	std::vector<Rgb> output(static_cast<std::size_t>(dst_w * dst_h), { 0.0f, 0.0f, 0.0f });
@@ -258,6 +384,44 @@ std::vector<Rgb> rasterize_model(const ModelData& model, int width, int height, 
 	return color_buffer;
 }
 
+#ifdef HAS_FIDELITTY
+
+void render_image(const ImageData& image, int max_term_w, int max_term_h, int supersample, Rgb clear_color, const ToneSettings& tone) {
+	const float aspect = static_cast<float>(image.height) / static_cast<float>(image.width);
+	int term_w = max_term_w;
+	int term_h = std::max(1, static_cast<int>(std::round(term_w * aspect * 0.5f)));
+
+	if (term_h > max_term_h) {
+		term_h = max_term_h;
+		term_w = std::max(1, static_cast<int>(std::round((term_h * 2.0f) / aspect)));
+		term_w = std::min(term_w, max_term_w);
+	}
+
+	std::vector<Rgb> pixels(static_cast<std::size_t>(image.width * image.height));
+	for (int y = 0; y < image.height; ++y) {
+		for (int x = 0; x < image.width; ++x) {
+			const std::size_t index = static_cast<std::size_t>(y * image.width + x);
+			const float alpha = image.alpha.empty() ? 1.0f : image.alpha[index];
+			pixels[index] = lerp(clear_color, image.pixels[index], alpha);
+		}
+	}
+
+	emit_terminal_frame(pixels, image.width, image.height, term_w, term_h, tone);
+}
+
+void render_model(const ModelData& model, int max_term_w, int max_term_h, int supersample, float yaw_degrees, float pitch_degrees, Rgb clear_color, const ToneSettings& tone) {
+	const int target_w = std::max(1, max_term_w);
+	const int target_h = std::max(1, max_term_h);
+	const int render_w = std::max(1, target_w * std::max(1, supersample));
+	const int render_h = std::max(2, target_h * std::max(1, supersample));
+
+	const std::vector<Rgb> color_buffer = rasterize_model(model, render_w, render_h, yaw_degrees, pitch_degrees, clear_color);
+
+	emit_terminal_frame(color_buffer, render_w, render_h, target_w, target_h, tone);
+}
+
+#else // #ifdef HAS_FIDELITTY
+
 void render_image(const ImageData& image, int max_term_w, int max_term_h, int supersample, Rgb clear_color, const ToneSettings& tone) {
 	const float aspect = static_cast<float>(image.height) / static_cast<float>(image.width);
 	int term_w = max_term_w;
@@ -297,6 +461,8 @@ void render_model(const ModelData& model, int max_term_w, int max_term_h, int su
 
 	emit_terminal_frame(pixels, target_w, target_h, tone);
 }
+
+#endif // #else // #ifdef HAS_FIDELITTY
 
 int render_request(const RenderRequest& request, CachedAsset& cache) {
 	std::string error;
