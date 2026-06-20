@@ -59,6 +59,17 @@ std::vector<Rgb> bilinear_resample(const std::vector<Rgb>& source, int src_w, in
   return output;
 }
 
+// Automate resource cleanup on all exit paths
+struct FttyResources {
+  ftty_context_t* ctx;
+  ftty_pipeline_t* pipeline;
+  FttyResources(ftty_context_t* ctx, ftty_pipeline_t* pipeline) : ctx(ctx), pipeline(pipeline) {}
+  ~FttyResources() {
+    ftty_context_destroy_render_pipeline(ctx, pipeline);
+    ftty_context_destroy(ctx);
+  }
+};
+
 void emit_terminal_frame(const std::vector<Rgb>& pixels,
                          int img_w, int img_h,
                          int term_w, int term_h,
@@ -80,8 +91,11 @@ void emit_terminal_frame(const std::vector<Rgb>& pixels,
       ctx, term_w, term_h, pipeline_im_w, pipeline_im_h, FTTY_PIXEL_RGB);
   if (!pipeline) {
     std::cerr << "fidelitty error: pipeline creation failed";
+    ftty_context_destroy(ctx);
     return;
   }
+
+  FttyResources ftty{ctx, pipeline};
 
   uint8_t* pipeline_input = ftty_pipeline_get_input_surface(pipeline);
   const std::size_t pixel_count = static_cast<std::size_t>(pipeline_im_w) * pipeline_im_h;
@@ -119,10 +133,6 @@ void emit_terminal_frame(const std::vector<Rgb>& pixels,
 
 		for (int x = 0; x < term_w; ++x) {
       const ftty_unicode_pixel_t& p = pipeline_output[term_w * y + x];
-      if (p.codepoint < 0x20 || p.codepoint == 0x7F) {
-        std::cerr << "fidelitty: control char U+" << std::hex << p.codepoint << std::dec
-                  << " at cell (" << x << "," << y << ")\n";
-      }
       append_utf8(glyphs, p.codepoint);
 			append_hex(fg_colors, p.fr, p.fg, p.fb);
 			append_hex(bg_colors, p.br, p.bg, p.bb);
