@@ -6,7 +6,7 @@ Render images and simple 3D assets directly inside the current Neovim buffer.
 
 ## Showcase
 
-![Image preview showcase](showcase/dog.png)
+![Image preview showcase](showcase/dog-fidelitty-telescope.png)
 
 <video src="https://raw.githubusercontent.com/SalarAlo/rndr.nvim/main/showcase/box_showcase.mp4" controls muted loop playsinline width="100%"></video>
 
@@ -29,7 +29,7 @@ Required:
 Optional:
 
 - `rsvg-convert`, `magick`, or `convert` for SVG rendering
-- `fidelitty` for higher-resolution rendering. Follow installation instructions at [](github.com/aaronbanse/fidelitty).
+- `fidelitty` for higher-resolution rendering. Follow installation instructions at [aaronbanse/fidelitty](github.com/aaronbanse/fidelitty).
 
 
 ## Plugin Manager Setup
