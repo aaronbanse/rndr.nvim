@@ -38,7 +38,7 @@ Optional:
 
 ```lua
 {
-  "SalarAlo/rndr.nvim",
+  "aaronbanse/rndr.nvim",
   build = "make",
   config = function()
     require("rndr").setup()
@@ -62,7 +62,7 @@ require("lazy").setup({
 
 ```lua
 use({
-  "SalarAlo/rndr.nvim",
+  "aaronbanse/rndr.nvim",
   run = "make",
   config = function()
     require("rndr").setup()
@@ -74,7 +74,7 @@ If `make` is unavailable:
 
 ```lua
 {
-  "SalarAlo/rndr.nvim",
+  "aaronbanse/rndr.nvim",
   build = "./scripts/build_renderer.sh",
 }
 ```
@@ -86,7 +86,7 @@ If you keep the binary somewhere else, override `renderer.bin` in `setup()`.
 Clone the repository and build the native renderer:
 
 ```bash
-git clone https://github.com/SalarAlo/rndr.nvim.git
+git clone https://github.com/aaronbanse/rndr.nvim.git
 cd rndr.nvim
 make
 ```
